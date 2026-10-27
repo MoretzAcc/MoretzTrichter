@@ -1,6 +1,7 @@
 services:
   timescaledb:
     image: timescale/timescaledb:latest-pg17
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -15,6 +16,7 @@ services:
 
   trichter:
     build: .
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL}

@@ -107,6 +107,13 @@ Trichter discards that new measurement, writes a warning to the console, and
 continues processing the remaining valid values in the packet. The response
 contains the number of discarded duplicates. A successful retry of an
 identical packet is recognized from `batch_id` and produces no extra warnings.
+If a timestamp occurs more than once for one series within one packet, the
+first sample in that packet is retained and each later sample is discarded in
+the same way, even when its value differs.
+
+Every response has an `X-Request-ID` header. Include it when reporting an API
+failure so the corresponding server log entry can be found without logging the
+packet contents.
 
 ## Access protection and ping
 
@@ -146,3 +153,23 @@ table stores `batch_id` and a normalized payload hash for idempotent retries.
 The measurement table will be a Timescale hypertable. Automatic retention and
 compression are initially disabled and can be decided later based on actual
 data volume.
+
+## Deployment
+
+Copy `.env.example` to `.env`, replace `POSTGRES_PASSWORD` and the matching
+password in `DATABASE_URL`, then start the initial deployment with
+`docker compose up -d --build`. This Compose project creates a fresh
+MoretzTrichter database volume; it does not connect to, inspect, or migrate
+the database used by the earlier Rust service.
+
+The initial SQL migration creates the Timescale extension, schema, hypertable,
+indexes, and the `grafana_reader` role. It is applied automatically by
+Trichter at startup and is recorded in `schema_migration`. The Compose
+PostgreSQL owner performs this first setup. Grafana can use a separately
+managed login role that is a member of `grafana_reader`; Trichter should remain
+the only role granted write access to the application tables.
+
+Keep the named Docker volumes. In particular, `trichter_state` contains the
+generated bearer token. To use a centrally managed secret instead, set
+`API_TOKEN` in the deployment environment; it takes precedence over the token
+file and is never copied into it.

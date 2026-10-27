@@ -1,0 +1,41 @@
+[project]
+name = "moretztrichter"
+version = "0.1.0"
+description = "Validated time-series ingestion service for TimescaleDB"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "fastapi>=0.128.0",
+    "numpy>=2.4.0",
+    "polars>=1.38.0",
+    "pydantic>=2.12.0",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["httpx>=0.28.0", "mypy>=1.19.0", "pytest>=9.0.0", "pytest-asyncio>=1.3.0", "ruff>=0.14.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+mypy_path = "src"
+packages = ["moretztrichter"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg"]
+ignore_missing_imports = true

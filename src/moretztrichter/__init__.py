@@ -1,0 +1,1 @@
+"""MoretzTrichter HTTP ingestion service."""

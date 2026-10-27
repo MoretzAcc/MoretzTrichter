@@ -1,7 +1,7 @@
 [project]
 name = "moretztrichter"
 version = "0.1.0"
-description = "Validated time-series ingestion service for TimescaleDB"
+description = "Validated time-series ingestion service for TimescaleDB (ai-generated)"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

@@ -1,5 +1,7 @@
 # MoretzTrichter
 
+> **AI notice:** AI generated this project.
+
 MoretzTrichter receives numeric time series from devices over HTTP and writes
 validated data to TimescaleDB. It is the only database writer for devices;
 Grafana receives a separate read-only database role. Trichter and TimescaleDB

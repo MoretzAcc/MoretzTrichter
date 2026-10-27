@@ -89,8 +89,9 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         app.state.token = get_or_create_token(active_settings.api_token, active_settings.token_file)
         app.state.max_request_bytes = active_settings.max_request_bytes
         app.state.database = active_database
-        await active_database.connect()
         try:
+            await active_database.connect()
+            await active_database.ensure_schema_ready()
             yield
         finally:
             await active_database.close()
@@ -120,6 +121,15 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz(request: Request) -> dict[str, str]:
+        try:
+            await request.app.state.database.ping()
+        except Exception:
+            logger.warning("readiness check failed for request %s", request.state.request_id)
+            raise HTTPException(status_code=503, detail="database unavailable") from None
         return {"status": "ok"}
 
     @app.get("/api/v1/ping", response_model=PingResponse, dependencies=[Depends(require_token)])

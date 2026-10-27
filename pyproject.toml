@@ -1,6 +1,6 @@
 [project]
 name = "moretztrichter"
-version = "0.1.0"
+version = "1.0.1"
 description = "Validated time-series ingestion service for TimescaleDB (ai-generated)"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.12.0",
     "uvicorn[standard]>=0.40.0",
 ]
+
+[project.scripts]
+moretztrichter-init-db = "moretztrichter.init_db:main"
 
 [build-system]
 requires = ["hatchling>=1.27.0"]

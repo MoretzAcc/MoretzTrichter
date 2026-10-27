@@ -19,7 +19,47 @@ class Database:
 
     async def connect(self) -> None:
         self._pool = await asyncpg.create_pool(self._database_url, min_size=1, max_size=10)
-        await self._apply_migrations()
+
+    async def apply_migrations(self) -> None:
+        """Apply pending SQL migrations. This is called only by the init command."""
+        pool = self._require_pool()
+        migration_dir = Path(__file__).parents[2] / "migrations"
+        async with pool.acquire() as connection:
+            await connection.execute("SELECT pg_advisory_lock(803241781)")
+            try:
+                await connection.execute(
+                    "CREATE TABLE IF NOT EXISTS schema_migration "
+                    "(name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+                )
+                for migration in sorted(migration_dir.glob("*.sql")):
+                    applied = await connection.fetchval(
+                        "SELECT 1 FROM schema_migration WHERE name = $1", migration.name
+                    )
+                    if applied is None:
+                        async with connection.transaction():
+                            await connection.execute(migration.read_text(encoding="utf-8"))
+                            await connection.execute(
+                                "INSERT INTO schema_migration (name) VALUES ($1)", migration.name
+                            )
+            finally:
+                await connection.execute("SELECT pg_advisory_unlock(803241781)")
+
+    async def ensure_schema_ready(self) -> None:
+        """Fail startup until all bundled migrations were applied manually."""
+        migration_dir = Path(__file__).parents[2] / "migrations"
+        expected_names = {migration.name for migration in migration_dir.glob("*.sql")}
+        pool = self._require_pool()
+        async with pool.acquire() as connection:
+            schema_exists = await connection.fetchval(
+                "SELECT to_regclass('public.schema_migration') IS NOT NULL"
+            )
+            if not schema_exists:
+                raise RuntimeError("database schema is not initialized; run moretztrichter-init-db")
+            rows = await connection.fetch("SELECT name FROM schema_migration")
+        applied_names = {str(row["name"]) for row in rows}
+        missing_names = expected_names - applied_names
+        if missing_names:
+            raise RuntimeError("database schema has pending migrations; run moretztrichter-init-db")
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -30,25 +70,6 @@ class Database:
         if self._pool is None:
             raise RuntimeError("database is not connected")
         return self._pool
-
-    async def _apply_migrations(self) -> None:
-        pool = self._require_pool()
-        migration_dir = Path(__file__).parents[2] / "migrations"
-        async with pool.acquire() as connection:
-            await connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migration "
-                "(name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-            )
-            for migration in sorted(migration_dir.glob("*.sql")):
-                applied = await connection.fetchval(
-                    "SELECT 1 FROM schema_migration WHERE name = $1", migration.name
-                )
-                if applied is None:
-                    async with connection.transaction():
-                        await connection.execute(migration.read_text(encoding="utf-8"))
-                        await connection.execute(
-                            "INSERT INTO schema_migration (name) VALUES ($1)", migration.name
-                        )
 
     async def ping(self) -> None:
         await self._require_pool().fetchval("SELECT 1")

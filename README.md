@@ -1,144 +1,86 @@
 # MoretzTrichter
 
-> **AI notice:** This project was developed with AI assistance.
+> **AI-generated notice:** This project was primarily generated with AI assistance. Review it before production use.
 
-MoretzTrichter is a small HTTP ingestion service for numeric time-series data.
-Devices send batches of measurements to the service; it validates them and
-writes them to TimescaleDB. Unknown devices and channels are registered
-automatically. Grafana or other tools can read the database separately.
+MoretzTrichter accepts authenticated batches of numeric time-series data over HTTP and stores them in TimescaleDB. Devices create series automatically; Grafana or other tools can read the database separately.
 
-## Run
+## Deploy
 
-Copy the example environment file, set a strong PostgreSQL password, and make
-the password in `DATABASE_URL` match `POSTGRES_PASSWORD`:
+Download [compose.yml](compose.yml) and [.env.example](.env.example), copy the latter to `.env`, set `POSTGRES_PASSWORD`, and update the password in `DATABASE_URL` to the same value. Initialize the database manually, then start Trichter:
 
-```bash
+```sh
 cp .env.example .env
-docker compose up -d --build
+docker compose up -d timescaledb
+docker compose run --rm --no-deps trichter moretztrichter-init-db
+docker compose up -d trichter
 ```
 
-The API is published on `http://<server-ip>:8080`. Change the host-side port
-in `compose.yml` if port 8080 is already used.
+Trichter listens on `http://<server>:8080`. The database is not published on a host port.
 
-The Compose stack runs Trichter and TimescaleDB. Database storage and the
-generated API token live in named Docker volumes, so they persist across
-container replacement. Both services restart automatically unless explicitly
-stopped.
+The first start generates a bearer token and stores it in the persistent `trichter_state` volume:
 
-## Authentication and checks
-
-All API routes under `/api/v1` require a bearer token. If `API_TOKEN` is not
-set, Trichter creates a random token on its first start, stores it in its
-persistent state volume with restrictive permissions, and never writes it to
-logs. An administrator can retrieve it with:
-
-```bash
+```sh
 docker compose exec trichter cat /var/lib/moretztrichter/api_token
 ```
 
-Set `API_TOKEN` in `.env` to provide and manage the token yourself. It takes
-precedence over the generated token.
+Alternatively, set `API_TOKEN` in `.env` to manage the token yourself. After changing it, recreate Trichter with `docker compose up -d --force-recreate trichter`.
 
-`GET /healthz` is unauthenticated and confirms only that the HTTP service is
-running. `GET /api/v1/ping` requires a token and verifies database access:
+## API
 
-```bash
-curl --fail --show-error \
-  -H "Authorization: Bearer $(docker compose exec -T trichter cat /var/lib/moretztrichter/api_token)" \
-  http://localhost:8080/api/v1/ping
-```
+`GET /healthz` is an unauthenticated liveness check. `GET /readyz` is an
+unauthenticated database-readiness check used by Docker. `GET /api/v1/ping`
+also verifies the database connection and requires `Authorization: Bearer <token>`.
 
-## Ingest data
-
-Send `POST /api/v1/ingest` with `Content-Type: application/json` and
-`Authorization: Bearer <token>`.
+Send measurements to `POST /api/v1/ingest` with the same header and `Content-Type: application/json`:
 
 ```json
 {
-  "batch_id": "019a8c50-1234-7abc-8def-0123456789ab",
-  "device": {
-    "identifier": "mac:AA:BB:CC:DD:EE:FF",
-    "name": "lab-supply-1"
-  },
+  "batch_id": "019a7f6a-85f2-7bc0-8947-2f2bfdc43af3",
+  "device": {"identifier": "mac:aa:bb:cc:dd:ee:ff", "name": "weather-station"},
   "channels": [
     {
-      "name": "voltage",
-      "unit": "V",
-      "samples": [
-        ["2026-10-27T09:00:00.123456Z", 12.47],
-        ["2026-10-27T09:00:01.123456Z", 12.48]
-      ]
+      "name": "temperature",
+      "unit": "°C",
+      "samples": [["2026-10-27T12:00:00Z", 21.5], ["2026-10-27T12:00:10Z", null]]
     }
   ]
 }
 ```
 
-`batch_id` must be a UUIDv7. Generate it once for a packet and reuse it for
-every retry. A series is identified by `device.identifier` and
-`channels[].name`; both are required. `device.name` and `channels[].unit` are
-optional metadata. Supplying either later updates its stored value.
-
-Samples are `[timestamp, value]` pairs. Timestamps must be RFC 3339 strings
-with an explicit offset, usually UTC such as `2026-10-27T09:00:00Z`. Values
-may be numbers or `null`; non-finite numbers are stored as `NULL`.
-
-Python 3.14 or newer can generate compatible IDs and timestamps without an
-additional dependency:
+Devices running Python 3.14+ can create the required values as follows:
 
 ```python
-from datetime import UTC, datetime
 from uuid import uuid7
 
-
-def new_batch_id() -> str:
-    return str(uuid7())
-
-
-def new_timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+batch_id = str(uuid7())
 ```
 
-Invalid packets are rejected without writing their measurements. Historical
-data is accepted. A timestamp is stored only once per series; later samples
-for that timestamp are discarded and logged as warnings. Repeating a complete
-packet with the same `batch_id` and content succeeds without inserting data
-again. Reusing a batch ID for different content returns `409 Conflict`.
+```python
+from datetime import datetime, timezone
 
-## Responses and retries
-
-Every response includes `X-Request-ID`, which identifies the related server
-log entry.
-
-| Result | Meaning | Client action |
-| --- | --- | --- |
-| `201 Created` | The batch was stored for the first time. | Success |
-| `200 OK` with `duplicate: true` | This batch was already stored. | Success |
-| Connection error, timeout, or no response | The service could not be reached. | Retry the same packet later. |
-| `429` or `5xx` | A temporary failure occurred. | Retry the same packet later. |
-| Other `4xx` | The packet was rejected. | Correct it and send a new packet. |
-
-## Security
-
-Compose publishes only the API port; TimescaleDB is reachable only inside the
-Docker network. For traffic outside a trusted local network, place the API
-behind a TLS-capable reverse proxy. Bearer tokens authenticate requests but do
-not encrypt traffic.
-
-## Development
-
-This project uses [uv](https://docs.astral.sh/uv/) and Python 3.14 or newer.
-
-```bash
-uv sync
-uv run ruff check .
-uv run mypy
-uv run pytest
+timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 ```
 
-Database schema changes are SQL migrations in `migrations/`, applied when
-Trichter starts. The initial migration creates the TimescaleDB extension,
-tables, hypertable, and Grafana read-only role.
+`batch_id` must be UUIDv7. Timestamps must be RFC 3339 strings with an explicit offset. A series is identified by `(device.identifier, channel.name)`; optional name and unit metadata update existing metadata when supplied. `null`, `NaN`, and infinite values are stored as SQL `NULL`.
+
+Invalid requests are rejected without writing the batch. Reuse a `batch_id` for retries: an identical normalized batch returns `200`, while a different payload returns `409`. Samples whose series/timestamp already exists are discarded and logged; the remaining samples are stored. Retry connection failures, `429`, and `5xx` responses; correct `4xx` requests before sending them again.
+
+## Update
+
+The Compose file follows the published `ghcr.io/moretzacc/moretztrichter:latest` image:
+
+```sh
+docker compose pull trichter
+docker compose run --rm --no-deps trichter moretztrichter-init-db
+docker compose up -d trichter
+```
+
+The GHCR package must be public for anonymous pulls; otherwise authenticate the
+server first with `docker login ghcr.io`.
+
+For access outside a trusted LAN, place Trichter behind a TLS-capable reverse
+proxy. Bearer tokens do not encrypt traffic.
 
 ## License
 
-Distributed under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).
